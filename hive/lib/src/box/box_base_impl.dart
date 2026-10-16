@@ -30,6 +30,10 @@ abstract class BoxBaseImpl<E> implements BoxBase<E> {
   late Keystore<E> keystore;
 
   bool _open = true;
+  Future<void>? _closeFuture;
+  bool _closeStarted = false;
+  bool _keystoreClosed = false;
+  bool _unregistered = false;
 
   /// Not part of public API
   BoxBaseImpl(
@@ -163,12 +167,30 @@ abstract class BoxBaseImpl<E> implements BoxBase<E> {
   }
 
   @override
-  Future<void> close() async {
-    if (!_open) return;
+  Future<void> close() {
+    final existing = _closeFuture;
+    if (existing != null) return existing;
+    if (!_open && !_closeStarted) return Future.value();
+    _closeStarted = true;
+    final future = _close();
+    _closeFuture = future;
+    // Keep concurrent callers on one shutdown; a later explicit call may retry failure.
+    future.then<void>((_) {}, onError: (Object error, StackTrace stack) {
+      if (identical(_closeFuture, future)) _closeFuture = null;
+    });
+    return future;
+  }
 
+  Future<void> _close() async {
     _open = false;
-    await keystore.close();
-    hive.unregisterBox(name);
+    if (!_keystoreClosed) {
+      await keystore.close();
+      _keystoreClosed = true;
+    }
+    if (!_unregistered) {
+      hive.unregisterBox(name);
+      _unregistered = true;
+    }
 
     await backend.close();
   }

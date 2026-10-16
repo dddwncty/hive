@@ -1,0 +1,33 @@
+name: Hive 2.2.3 lifecycle
+
+on:
+  push:
+    branches: [codex/hive-2.2.3-close-lifecycle]
+  pull_request:
+    branches: [codex/hive-2.2.3-close-lifecycle]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hive:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: hive
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1
+        with:
+          sdk: 3.11.0
+      - run: dart pub get
+      - name: Run all VM tests, including native close regressions
+        run: dart test --platform vm
+      - name: Run browser tests
+        if: runner.os == 'Linux'
+        run: dart test --platform chrome

@@ -1,6 +1,11 @@
 name: Dart CI
 
-on: [push, pull_request]
+# The 2.2.3 lifecycle branch has its own supported SDK/platform matrix.
+on:
+  push:
+    branches-ignore: [codex/hive-2.2.3-close-lifecycle]
+  pull_request:
+    branches-ignore: [codex/hive-2.2.3-close-lifecycle]
 
 jobs:
   test-hive:

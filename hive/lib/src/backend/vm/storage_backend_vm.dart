@@ -26,18 +26,24 @@ class StorageBackendVm extends StorageBackend {
   /// Not part of public API
   ///
   /// Not `late final` for testing
+  RandomAccessFile? _readRaf;
   @visibleForTesting
-  late RandomAccessFile readRaf;
+  RandomAccessFile get readRaf => _readRaf!;
+  set readRaf(RandomAccessFile value) => _readRaf = value;
 
   /// Not part of public API
   ///
   /// Not `late final` for testing
+  RandomAccessFile? _writeRaf;
   @visibleForTesting
-  late RandomAccessFile writeRaf;
+  RandomAccessFile get writeRaf => _writeRaf!;
+  set writeRaf(RandomAccessFile value) => _writeRaf = value;
 
   /// Not part of public API
+  RandomAccessFile? _lockRaf;
   @visibleForTesting
-  late RandomAccessFile lockRaf;
+  RandomAccessFile get lockRaf => _lockRaf!;
+  set lockRaf(RandomAccessFile value) => _lockRaf = value;
 
   /// Not part of public API
   @visibleForTesting
@@ -70,6 +76,8 @@ class StorageBackendVm extends StorageBackend {
     readRaf = await _file.open();
     writeRaf = await _file.open(mode: FileMode.writeOnlyAppend);
     writeOffset = await writeRaf.length();
+    // Compaction replaces read/write handles; do not retain their closed predecessors.
+    _closedFiles.retainAll([_readRaf, _writeRaf, _lockRaf].whereType<RandomAccessFile>());
   }
 
   @override
@@ -183,8 +191,8 @@ class StorageBackendVm extends StorageBackend {
         await compactRaf.close();
       }
 
-      await readRaf.close();
-      await writeRaf.close();
+      await _closeFile(readRaf);
+      await _closeFile(writeRaf);
       await compactFile.rename(path);
       await open();
 
@@ -207,12 +215,38 @@ class StorageBackendVm extends StorageBackend {
     });
   }
 
-  Future _closeInternal() async {
-    await readRaf.close();
-    await writeRaf.close();
+  final _closedFiles = Set<RandomAccessFile>.identity();
+  bool _lockDeleted = false;
 
-    await lockRaf.close();
-    await _lockFile.delete();
+  Future<void> _closeFile(RandomAccessFile file) async {
+    if (_closedFiles.contains(file)) return;
+    await file.close();
+    _closedFiles.add(file);
+  }
+
+  Future _closeInternal() async {
+    Object? firstError;
+    StackTrace? firstStack;
+    final files = [_readRaf, _writeRaf, _lockRaf].whereType<RandomAccessFile>();
+    for (final file in files) {
+      try {
+        await _closeFile(file);
+      } catch (error, stack) {
+        firstError ??= error;
+        firstStack ??= stack;
+      }
+    }
+    // Do not delete the lock pathname while any handle still needs cleanup.
+    if (_lockRaf != null && files.every(_closedFiles.contains) && !_lockDeleted) {
+      try {
+        await _lockFile.delete();
+        _lockDeleted = true;
+      } catch (error, stack) {
+        firstError ??= error;
+        firstStack ??= stack;
+      }
+    }
+    if (firstError != null) Error.throwWithStackTrace(firstError, firstStack!);
   }
 
   @override
